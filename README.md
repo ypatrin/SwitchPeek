@@ -20,7 +20,7 @@ Windows only changes a couple of letters in the corner of the taskbar when you s
 ## Requirements
 
 - Windows 10 or 11
-- .NET Framework 4.x (preinstalled on every supported version of Windows)
+- .NET Framework 4.0 or later. Nothing to install: every Windows 10 ships with 4.6 or newer, and Windows 11 ships with 4.8 or newer. SwitchPeek targets the CLR 4 runtime and only uses APIs available since .NET Framework 4.0.
 
 ## Install
 
