@@ -175,7 +175,7 @@ class SetupForm : Form
 
         cancel.Text = Loc.T("Cancel", "Отмена", "Скасувати");
         cancel.Bounds = new Rectangle(372, 16, 88, 32);
-        cancel.DialogResult = DialogResult.Cancel;
+        cancel.Click += delegate { Close(); };
 
         footer.Controls.Add(install);
         footer.Controls.Add(cancel);
