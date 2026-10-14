@@ -1,8 +1,11 @@
 ﻿// SwitchPeek — показывает раскладку по центру экрана при её смене (как в macOS/GNOME).
-// Сборка: build.cmd (результат — bin\SwitchPeek.exe)
-// Предпросмотр картинок без запуска: SwitchPeek.exe --preview <папка>
+// Сборка: build.cmd (результат — bin\SwitchPeek.exe и bin\SwitchPeekSetup.exe)
+// Ключи: --preview <папка>  — отрисовать плашки в PNG и выйти
+//        --welcome          — показать приветствие (запуск из установщика)
+//        --uninstall [--quiet] — удалить установленную программу
 
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -16,8 +19,6 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("SwitchPeek")]
-[assembly: AssemblyProduct("SwitchPeek")]
-[assembly: AssemblyVersion("1.0.0.0")]
 
 static class Settings
 {
@@ -49,13 +50,18 @@ static class Program
             Preview(args[1]);
             return;
         }
+        if (args.Length >= 1 && args[0] == "--uninstall")
+        {
+            Uninstaller.Run(Array.IndexOf(args, "--quiet") >= 0);
+            return;
+        }
 
         bool created;
         using (var mutex = new Mutex(true, "SwitchPeek_SingleInstance_7f3a91", out created))
         {
             if (!created) return;
             Application.EnableVisualStyles();
-            Application.Run(new IndicatorContext());
+            Application.Run(new IndicatorContext(Array.IndexOf(args, "--welcome") >= 0));
             GC.KeepAlive(mutex);
         }
     }
@@ -86,38 +92,44 @@ class IndicatorContext : ApplicationContext
     IntPtr lastHkl = IntPtr.Zero;
     int fgChangedAt;
 
-    public IndicatorContext()
+    public IndicatorContext(bool welcome)
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add(T("Show now", "Показать сейчас", "Показати зараз")).Click += delegate { ShowNow(); };
-        var autoItem = new ToolStripMenuItem(T("Run at Windows startup", "Запускать вместе с Windows", "Запускати разом з Windows"));
+        menu.Items.Add(Loc.T("Show now", "Показать сейчас", "Показати зараз")).Click += delegate { ShowNow(); };
+        var autoItem = new ToolStripMenuItem(Loc.T("Run at Windows startup", "Запускать вместе с Windows", "Запускати разом з Windows"));
         autoItem.Checked = Autostart.IsEnabled();
         autoItem.Click += delegate
         {
-            Autostart.Set(!autoItem.Checked);
+            Autostart.Set(!autoItem.Checked, Application.ExecutablePath);
             autoItem.Checked = Autostart.IsEnabled();
         };
         menu.Items.Add(autoItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(T("Exit", "Выход", "Вихід")).Click += delegate { ExitThread(); };
+        menu.Items.Add(Loc.T("Exit", "Выход", "Вихід")).Click += delegate { ExitThread(); };
 
-        tray.Icon = MakeTrayIcon();
-        tray.Text = T("SwitchPeek — keyboard layout indicator", "SwitchPeek — индикатор раскладки", "SwitchPeek — індикатор розкладки");
+        tray.Icon = AppInfo.LoadIcon(SystemInformation.SmallIconSize);
+        tray.Text = Loc.T("SwitchPeek — keyboard layout indicator", "SwitchPeek — индикатор раскладки", "SwitchPeek — індикатор розкладки");
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
 
         poll.Interval = Settings.PollMs;
         poll.Tick += OnPoll;
         poll.Start();
+
+        if (welcome) Welcome();
     }
 
-    // Строки меню на языке интерфейса Windows.
-    static string T(string en, string ru, string uk)
+    // После установки: уведомление и демонстрация плашки.
+    void Welcome()
     {
-        string lang = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
-        if (lang == "uk") return uk;
-        if (lang == "ru" || lang == "be") return ru;
-        return en;
+        tray.ShowBalloonTip(6000, "SwitchPeek",
+            Loc.T("SwitchPeek is running. Switch the keyboard layout to see it.",
+                  "SwitchPeek запущен. Переключите раскладку, чтобы увидеть индикатор.",
+                  "SwitchPeek запущено. Перемкніть розкладку, щоб побачити індикатор."),
+            ToolTipIcon.None);
+        var once = new System.Windows.Forms.Timer { Interval = 700 };
+        once.Tick += delegate { once.Stop(); once.Dispose(); ShowNow(); };
+        once.Start();
     }
 
     void ShowNow()
@@ -158,26 +170,6 @@ class IndicatorContext : ApplicationContext
         tray.Dispose();
         overlay.Dispose();
         base.ExitThreadCore();
-    }
-
-    static Icon MakeTrayIcon()
-    {
-        using (var bmp = new Bitmap(32, 32, PixelFormat.Format32bppArgb))
-        {
-            using (var g = Graphics.FromImage(bmp))
-            {
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-                g.Clear(Color.Transparent);
-                using (var path = Overlay.RoundRect(new RectangleF(1, 3, 30, 26), 7))
-                using (var bg = new SolidBrush(Color.FromArgb(235, 45, 45, 50)))
-                    g.FillPath(bg, path);
-                using (var f = new Font("Segoe UI Semibold", 17f, GraphicsUnit.Pixel))
-                using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                    g.DrawString("Aa", f, Brushes.White, new RectangleF(0, 3, 32, 26), sf);
-            }
-            return Icon.FromHandle(bmp.GetHicon());
-        }
     }
 }
 
@@ -427,23 +419,43 @@ class Overlay : Form
     }
 }
 
-static class Autostart
+// Удаление: вызывается из «Установленные приложения» как SwitchPeek.exe --uninstall.
+static class Uninstaller
 {
-    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    const string ValueName = "SwitchPeek";
-
-    public static bool IsEnabled()
+    public static void Run(bool quiet)
     {
-        using (var k = Registry.CurrentUser.OpenSubKey(RunKey))
-            return k != null && k.GetValue(ValueName) != null;
-    }
+        if (!quiet && MessageBox.Show(
+                Loc.T("Remove SwitchPeek from this computer?",
+                      "Удалить SwitchPeek с этого компьютера?",
+                      "Видалити SwitchPeek з цього комп'ютера?"),
+                "SwitchPeek", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
 
-    public static void Set(bool on)
-    {
-        using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
+        int self = Process.GetCurrentProcess().Id;
+        foreach (Process p in Process.GetProcessesByName(AppInfo.Name))
         {
-            if (on) k.SetValue(ValueName, "\"" + Application.ExecutablePath + "\"");
-            else k.DeleteValue(ValueName, false);
+            if (p.Id == self) continue;
+            try { p.Kill(); p.WaitForExit(3000); } catch (Exception) { }
+        }
+
+        Autostart.Set(false, null);
+        try { Registry.CurrentUser.DeleteSubKeyTree(AppInfo.UninstallKey, false); } catch (Exception) { }
+        try { File.Delete(AppInfo.StartMenuShortcut); } catch (Exception) { }
+
+        if (!quiet)
+            MessageBox.Show(Loc.T("SwitchPeek has been removed.", "SwitchPeek удалён.", "SwitchPeek видалено."),
+                            "SwitchPeek", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        // Папку удаляем только если запущены из неё — и уже после выхода этого процесса.
+        string dir = Path.GetDirectoryName(Application.ExecutablePath);
+        if (string.Equals(dir.TrimEnd('\\'), AppInfo.InstallDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+        {
+            var psi = new ProcessStartInfo("cmd.exe",
+                "/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"" + dir + "\"");
+            psi.CreateNoWindow = true;
+            psi.UseShellExecute = false;
+            psi.WorkingDirectory = Path.GetTempPath();
+            Process.Start(psi);
         }
     }
 }
