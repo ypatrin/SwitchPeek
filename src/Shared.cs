@@ -11,6 +11,7 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Yurii Patrin")]
 [assembly: AssemblyVersion("1.0.0.0")]
 [assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyInformationalVersion("1.0")]
 
 static class AppInfo
 {
@@ -21,7 +22,11 @@ static class AppInfo
 
     public static string Version
     {
-        get { return Assembly.GetExecutingAssembly().GetName().Version.ToString(3); }
+        get
+        {
+            Version v = Assembly.GetExecutingAssembly().GetName().Version;
+            return v.ToString(v.Build > 0 ? 3 : 2); // 1.0, 1.0.1, ...
+        }
     }
 
     public static string InstallDir
